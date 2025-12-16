@@ -27,17 +27,24 @@
 CEcoTaskScheduler1Lab_C761620F g_xCEcoTaskScheduler1Lab_C761620F = {0};
 
 /* Резервируем область под статические задачи */
-#define MAX_STATIC_TASK_COUNT   3
+#define MAX_STATIC_TASK_COUNT   10
 CEcoTask1Lab_C761620F g_xCEcoTask1List_C761620F[MAX_STATIC_TASK_COUNT] = {0};
 
 /* Резервируем область под стеки статических задач */
 #define MAX_STATIC_STACK_TASK_COUNT   4096 * MAX_STATIC_TASK_COUNT
+__attribute__((aligned(16))) 
 uint64_t g_xCEcoStackTask1List_C761620F[MAX_STATIC_STACK_TASK_COUNT] = {0};
+
+/* Указатель на текущую выполняемую задачу */
+volatile CEcoTask1Lab_C761620F* g_pCurrentTask = 0;
+static CEcoTask1Lab_C761620F* g_pNextTask = 0;
 
 /* Контекст */
 uint64_t * volatile g_pxCurrentTCB_C761620F = 0;
 
 uint64_t g_indx = 0;
+
+void CEcoTaskScheduler1Lab_C761620F_ChangeTask(void);
 
 /*
  *
@@ -77,68 +84,104 @@ uint64_t g_indx = 0;
  * </описание>
  *
  */
+__attribute__((naked))
 void CEcoTaskScheduler1Lab_C761620F_TimerHandler(void) {
-
-    /* Сохранение контекста текущей задачи */
-    //__asm volatile (
-    //"STP 	X0, X1, [SP, #-0x10]! \n"
-    //"STP 	X2, X3, [SP, #-0x10]! \n"
-    //"STP 	X4, X5, [SP, #-0x10]! \n"
-    //"STP 	X6, X7, [SP, #-0x10]! \n"
-    //"STP 	X8, X9, [SP, #-0x10]! \n"
-    //"STP 	X10, X11, [SP, #-0x10]!\n"
-    //"STP 	X12, X13, [SP, #-0x10]!\n"
-    //"STP 	X14, X15, [SP, #-0x10]!\n"
-    //"STP 	X16, X17, [SP, #-0x10]!\n"
-    //"STP 	X18, X19, [SP, #-0x10]!\n"
-    //"STP 	X20, X21, [SP, #-0x10]!\n"
-    //"STP 	X22, X23, [SP, #-0x10]!\n"
-    //"STP 	X24, X25, [SP, #-0x10]!\n"
-    //"STP 	X26, X27, [SP, #-0x10]!\n"
-    //"STP 	X28, X29, [SP, #-0x10]!\n"
-    //"STP 	X30, XZR, [SP, #-0x10]!\n"
-    //"MRS		X3, SPSR_EL1\n"
-    //"MRS		X2, ELR_EL1\n"
-    //"STP 	X2, X3, [SP, #-0x10]!\n"
-    //"LDR 	X0, =g_pxCurrentTCB_C761620F \n"
-    //"LDR 	X1, [X0] \n"
-    //"MOV 	X0, SP \n"
-    //"STR 	X0, [X1] \n"
-    //);
-    /* Переключение контекста задач */
     __asm volatile (
-    "BL 	CEcoTaskScheduler1Lab_C761620F_TaskSwitchContext \n"
-    );
+        "mrs x0, elr_el1 \n\t"
+        "mrs x1, spsr_el1 \n\t"
+        "stp x0, x1, [sp, #-16]! \n\t"
 
-    /* Востановление контекста следующей задачи */
-    //__asm volatile ( "LDR		X0, =g_pxCurrentTCB_C761620F \n"
-    //"LDR		X1, [X0] \n"
-    //"LDR		X0, [X1] \n"
-    //"MOV		SP, X0 \n"
-    //"LDP 	X2, X3, [SP], #0x10 \n"
-    //"MSR		SPSR_EL1, X3 \n"
-    //"MSR		ELR_EL1, X2 \n"
-    //"LDP 	X30, XZR, [SP], #0x10 \n"
-    //"LDP 	X28, X29, [SP], #0x10 \n"
-    //"LDP 	X26, X27, [SP], #0x10 \n"
-    //"LDP 	X24, X25, [SP], #0x10 \n"
-    //"LDP 	X22, X23, [SP], #0x10 \n"
-    //"LDP 	X20, X21, [SP], #0x10 \n"
-    //"LDP 	X18, X19, [SP], #0x10 \n"
-    //"LDP 	X16, X17, [SP], #0x10 \n"
-    //"LDP 	X14, X15, [SP], #0x10 \n"
-    //"LDP 	X12, X13, [SP], #0x10 \n"
-    //"LDP 	X10, X11, [SP], #0x10 \n"
-    //"LDP 	X8, X9, [SP], #0x10 \n"
-    //"LDP 	X6, X7, [SP], #0x10 \n"
-    //"LDP 	X4, X5, [SP], #0x10 \n"
-    //"LDP 	X2, X3, [SP], #0x10 \n"
-    //"LDP 	X0, X1, [SP], #0x10 \n"
-    //"ERET \n"
-    //);
-    
+        "stp x29, x30, [sp, #-16]! \n\t"
+
+        "bl CEcoTaskScheduler1Lab_C761620F_ChangeTask \n\t"
+
+        "ldp x29, x30, [sp], #16 \n\t"
+
+        "ldr x0, =g_pCurrentTask \n\t"
+        "ldr x1, [x0] \n\t"
+        "ldr x2, =g_pNextTask \n\t"
+        "ldr x3, [x2] \n\t"
+        
+        "cmp x1, x3 \n\t"
+        "b.eq 1f \n\t"
+
+        "cbz x1, 2f \n\t"
+        "mov x4, sp \n\t"
+        "str x4, [x1, #16] \n\t"
+        "2: \n\t"
+
+        "str x3, [x0] \n\t"
+        "ldr x5, [x3, #16] \n\t"
+        "mov sp, x5 \n\t"
+
+        "ldp x0, x1, [sp], #16 \n\t"
+        "msr elr_el1, x0 \n\t"
+        "msr spsr_el1, x1 \n\t"
+
+        "ldp x0, x1, [sp], #16 \n\t"   
+
+        "ldp x1, x2, [sp], #16 \n\t"
+        "ldp x3, x4, [sp], #16 \n\t"
+        "ldp x5, x6, [sp], #16 \n\t"
+        "ldp x7, x8, [sp], #16 \n\t"
+        "ldp x9, x10, [sp], #16 \n\t"
+        "ldp x11, x12, [sp], #16 \n\t"
+        "ldp x13, x14, [sp], #16 \n\t"
+        "ldp x15, x16, [sp], #16 \n\t"
+        "ldp x17, x18, [sp], #16 \n\t"
+        "ldp x19, x20, [sp], #16 \n\t"
+        "ldp x21, x22, [sp], #16 \n\t"
+        "ldp x23, x24, [sp], #16 \n\t"
+        "ldp x25, x26, [sp], #16 \n\t"
+        "ldp x27, x28, [sp], #16 \n\t"
+        "ldp x29, x30, [sp], #16 \n\t"
+        
+        "eret \n\t"
+
+        "1: \n\t"
+        "ldp x0, x1, [sp], #16 \n\t"
+        "msr elr_el1, x0 \n\t"
+        "msr spsr_el1, x1 \n\t"
+        "ret \n\t"
+        : 
+        : 
+        : "memory"
+    );
 }
 
+void CEcoTaskScheduler1Lab_C761620F_ChangeTask(void) {
+    int i = 0;
+    uint32_t maxTime = 0;
+    
+    if (g_pCurrentTask != 0 && g_pCurrentTask->m_bCompleted == 0) {
+        if (g_pCurrentTask->m_uRemainingTime > 0) {
+            g_pCurrentTask->m_uRemainingTime--;
+        }
+        if (g_pCurrentTask->m_uRemainingTime == 0) {
+            g_pCurrentTask->m_bCompleted = 1;
+        }
+    }
+
+    if (g_pCurrentTask != 0 && g_pCurrentTask->m_bCompleted == 0) {
+        g_pNextTask = (CEcoTask1Lab_C761620F*)g_pCurrentTask;
+        return; 
+    }
+
+    g_pNextTask = 0;
+    for(i = 0; i < MAX_STATIC_TASK_COUNT; i++) {
+        if (g_xCEcoTask1List_C761620F[i].pfunc != 0 && 
+            g_xCEcoTask1List_C761620F[i].m_bCompleted == 0 && 
+            g_xCEcoTask1List_C761620F[i].m_uRemainingTime > maxTime) {
+            maxTime = g_xCEcoTask1List_C761620F[i].m_uRemainingTime;
+            g_pNextTask = &g_xCEcoTask1List_C761620F[i];
+        }
+    }
+
+    if (g_pNextTask != 0) 
+        return;
+    g_pNextTask = g_pCurrentTask != 0 ? (CEcoTask1Lab_C761620F*)g_pCurrentTask : &g_xCEcoTask1List_C761620F[0];
+    
+}
 
 /*
  *
@@ -281,7 +324,7 @@ static int16_t ECOCALLMETHOD CEcoTaskScheduler1Lab_C761620F_InitWith(/*in*/ IEco
     }
 
     /* Установка обработчика прерывания программируемого таймера */
-    pCMe->m_pIArmTimer->pVTbl->set_Interval(pCMe->m_pIArmTimer, 1000000);
+    pCMe->m_pIArmTimer->pVTbl->set_Interval(pCMe->m_pIArmTimer, 20000);
     pCMe->m_pIArmTimer->pVTbl->set_IrqHandler(pCMe->m_pIArmTimer, (voidptr_t*)CEcoTaskScheduler1Lab_C761620F_TimerHandler);
 
     return 0;
@@ -299,31 +342,35 @@ static int16_t ECOCALLMETHOD CEcoTaskScheduler1Lab_C761620F_InitWith(/*in*/ IEco
  *
  */
 static int16_t ECOCALLMETHOD CEcoTaskScheduler1Lab_C761620F_NewTask(/*in*/ IEcoTaskScheduler1Ptr_t me, /*in*/ voidptr_t address, /*in*/ voidptr_t data, /*in*/ uint32_t stackSize, /* out */ IEcoTask1** ppITask) {
-    /*CEcoTaskScheduler1Lab_C761620F* pCMe = (CEcoTaskScheduler1Lab_C761620F*)me;*/
     int32_t indx = 0;
-    int32_t reg = 30;
+    int i = 0;
     uint64_t* pxTopOfStack = 0;
-
-    /* Проверка указателей */
-    if (me == 0 ) {
-        return -1;
-    }
-
-    /* Проверяем указатель пула статических задач */
-    for (indx = 0; indx < 3; indx++) {
+    uint64_t stackAddr = 0;
+    uint32_t burstTime = (uint32_t)((uint64_t)data); 
+    if (me == 0 ) return -1;
+    for (indx = 0; indx < MAX_STATIC_TASK_COUNT; indx++) {
         if (g_xCEcoTask1List_C761620F[indx].pfunc == 0) {
             g_xCEcoTask1List_C761620F[indx].pfunc = address;
             g_xCEcoTask1List_C761620F[indx].m_cRef = 1;
-            g_xCEcoTask1List_C761620F[indx].m_sp = (byte_t*)&g_xCEcoStackTask1List_C761620F[indx*4096];
-            pxTopOfStack = g_xCEcoTask1List_C761620F[indx].m_sp;
-            while (reg > 0) {
-                pxTopOfStack--;
-                reg--;
-            }
-            *pxTopOfStack = (uint64_t)g_xCEcoTask1List_C761620F[indx].pfunc;
+            g_xCEcoTask1List_C761620F[indx].m_uId = indx;
+            g_xCEcoTask1List_C761620F[indx].m_uBurstTime = burstTime;
+            g_xCEcoTask1List_C761620F[indx].m_uRemainingTime = burstTime;
+            g_xCEcoTask1List_C761620F[indx].m_bCompleted = 0;
+            pxTopOfStack = (uint64_t*)&g_xCEcoStackTask1List_C761620F[(indx + 1) * (4096 / 8)];
+            stackAddr = (uint64_t)pxTopOfStack;
+            if (stackAddr & 0xF) { stackAddr -= 8; }
+            pxTopOfStack = (uint64_t*)stackAddr;
+            pxTopOfStack -= 30; 
+            for(i=0; i<30; i++) pxTopOfStack[i] = 0;
+            pxTopOfStack -= 2;
+            pxTopOfStack[0] = 0;
+            pxTopOfStack[1] = 0;
+            pxTopOfStack -= 2;
+            pxTopOfStack[0] = (uint64_t)address;
+            pxTopOfStack[1] = 0x00000005;
+            g_xCEcoTask1List_C761620F[indx].m_sp = pxTopOfStack;
             *ppITask = (IEcoTask1*)&g_xCEcoTask1List_C761620F[indx];
             return 0;
-            break;
         }
     }
     return -1;
@@ -452,32 +499,16 @@ static int16_t ECOCALLMETHOD CEcoTaskScheduler1Lab_C761620F_UnRegisterInterrupt(
  */
 static int16_t ECOCALLMETHOD CEcoTaskScheduler1Lab_C761620F_Start(/*in*/ IEcoTaskScheduler1Ptr_t me) {
     CEcoTaskScheduler1Lab_C761620F* pCMe = (CEcoTaskScheduler1Lab_C761620F*)me;
+    if (me == 0 ) return -1;
 
-    /* Проверка указателей */
-    if (me == 0 ) {
-        return -1;
-    }
+    g_pCurrentTask = 0;
 
-    /* Запускаем таймер */
-    //pCMe->m_pIArmTimer->pVTbl->Start(pCMe->m_pIArmTimer);
-    g_pxCurrentTCB_C761620F = (uint64_t*)&pCMe->m_pTaskList[0];
+    pCMe->m_pIArmTimer->pVTbl->Start(pCMe->m_pIArmTimer);
 
-    /* Передаем управление задаче */
+    __asm volatile ("msr daifclr, #2" ::: "memory");
+
     while (1) {
-        if (g_pxCurrentTCB_C761620F == (uint64_t*)&pCMe->m_pTaskList[g_indx] && pCMe->m_pTaskList[g_indx].pfunc != 0) {
-            pCMe->m_pTaskList[g_indx].pfunc();
-            g_indx++;
-            if (g_indx >= MAX_STATIC_TASK_COUNT) {
-                g_indx = 0;
-            }
-            else if (pCMe->m_pTaskList[g_indx].pfunc == 0) {
-                g_indx = 0;
-            }
-            g_pxCurrentTCB_C761620F = (uint64_t*)&pCMe->m_pTaskList[g_indx];
-        }
-        else {
-            asm volatile ("NOP\n\t" ::: "memory");
-        }
+        asm volatile ("wfi\n\t" ::: "memory");
     }
     return 0;
 }

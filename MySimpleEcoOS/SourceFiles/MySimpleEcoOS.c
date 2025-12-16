@@ -47,9 +47,69 @@ IEcoSemaphore1* g_pISemaphore = 0;
 /* Указатель на интерфейсы */
 IEcoVBIOS1Video* g_pIVideo = 0;
 IEcoSystemTimer1* g_pISysTimer = 0;
+IEcoTaskScheduler1* g_pIScheduler = 0;
 
 char_t g_strTask[2] = {0};
 
+void DrawRectangle(byte_t color, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2) {
+    uint16_t offset = 0;
+    /* Горизонтальные линии */
+    for (offset = x1; offset <= x2; offset++) {
+        g_pIVideo->pVTbl->WriteDot(g_pIVideo, color, 0, offset, y1);
+        g_pIVideo->pVTbl->WriteDot(g_pIVideo, color, 0, offset, y2);
+    }
+    /* Вертикальные линии */
+    for (offset = y1; offset <= y2; offset++) {
+        g_pIVideo->pVTbl->WriteDot(g_pIVideo, color, 0, x1, offset);
+        g_pIVideo->pVTbl->WriteDot(g_pIVideo, color, 0, x2, offset);
+    }
+}
+
+void ProgressBar(char_t* name, uint16_t nameLen, byte_t value, uint16_t x, uint16_t y, byte_t color) {
+    uint16_t x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+    uint16_t offsetX = 0, offsetY = 0;
+    uint16_t len = 0;
+    char_t outCount[5] = {0};
+
+    /* Вывод имени задачи */
+    g_pIVideo->pVTbl->WriteString(g_pIVideo, 0, 0, x, y, CHARACTER_ATTRIBUTE_FORE_COLOR_YELLOW, name, nameLen);
+
+    /* Координаты рамки */
+    x1 = (x + nameLen + 2) * 8; /* Чуть сдвинул для красоты */
+    y1 = y * 16 + 2;
+    x2 = x1 + 200; /* Ширина бара 200 пикселей */
+    y2 = y * 16 + 14;
+
+    /* Рисуем рамку */
+    DrawRectangle(CHARACTER_ATTRIBUTE_FORE_COLOR_WHITTE, x1, y1, x2, y2);
+
+    /* Ограничение значения */
+    if (value > 100) value = 100;
+
+    /* Вывод процентов текстом */
+    char_t hundred = value / 100;
+    char_t dozen = (value % 100) / 10;
+    char_t unit = value % 10;
+
+    if (hundred == 0) outCount[0] = ' '; else outCount[0] = '0' + hundred;
+    if (hundred == 0 && dozen == 0) outCount[1] = ' '; else outCount[1] = '0' + dozen;
+    outCount[2] = '0' + unit;
+    outCount[3] = '%';
+    g_pIVideo->pVTbl->WriteString(g_pIVideo, 0, 0, x + nameLen + 28, y, CHARACTER_ATTRIBUTE_FORE_COLOR_YELLOW, outCount, 4);
+
+    /* Заливка прогресс-бара */
+    len = ((x2 - x1 - 2) * value) / 100; /* -2 чтобы не затирать рамку */
+    
+    for (offsetY = y1 + 1; offsetY < y2; offsetY++) {
+        for (offsetX = x1 + 1; offsetX < x2; offsetX++) {
+            if (offsetX <= x1 + 1 + len) {
+                g_pIVideo->pVTbl->WriteDot(g_pIVideo, color, 0, offsetX, offsetY);
+            } else {
+                g_pIVideo->pVTbl->WriteDot(g_pIVideo, 0, 0, offsetX, offsetY);
+            }
+        }
+    }
+}
 
 void TimerHandler(void) {
     g_pIMutex->pVTbl->Lock(g_pIMutex);
@@ -86,46 +146,54 @@ void printProgress() {
     g_pIVideo->pVTbl->WriteString(g_pIVideo, 0, 0, 1, 0, CHARACTER_ATTRIBUTE_FORE_COLOR_WHITTE, g_strTask, 1);
 }
 
-void Task1() {
-    uint64_t currentTime = g_pISysTimer->pVTbl->get_SingleTimerCounter(g_pISysTimer);
-    uint64_t endTime = currentTime +  5000000ul;
-    uint64_t changeTime = currentTime;
-    g_pIVideo->pVTbl->WriteString(g_pIVideo, 0, 0, 0, 0, CHARACTER_ATTRIBUTE_FORE_COLOR_WHITTE, "1", 1);
-    while ( endTime >= currentTime) {
-        if (changeTime >= currentTime) {
-            printProgress();
-            changeTime += 50000ul;
-        }
-        currentTime = g_pISysTimer->pVTbl->get_SingleTimerCounter(g_pISysTimer);
-    }
+void BusyWait(uint32_t delay) {
+    volatile uint32_t i;
+    for(i = 0; i < delay; i++) { }
 }
 
-void Task2() {
-    uint64_t currentTime = g_pISysTimer->pVTbl->get_SingleTimerCounter(g_pISysTimer);
-    uint64_t endTime = currentTime +  5000000ul;
-    uint64_t changeTime = currentTime;
-    g_pIVideo->pVTbl->WriteString(g_pIVideo, 0, 0, 0, 0, CHARACTER_ATTRIBUTE_FORE_COLOR_WHITTE, "2", 1);
-    while ( endTime >= currentTime) {
-        if (changeTime >= currentTime) {
-            printProgress();
-            changeTime += 50000ul;
-        }
-        currentTime = g_pISysTimer->pVTbl->get_SingleTimerCounter(g_pISysTimer);
+void TaskSuperShort(void) {
+    int i = 0;
+    for(i = 0; i <= 100; i++) {
+        ProgressBar("Sudden task :", 12, i, 1, 11, CHARACTER_ATTRIBUTE_FORE_COLOR_GREEN);
+        BusyWait(100000); 
     }
+    while(1) { BusyWait(10000); }
 }
 
-void Task3() {
-    uint64_t currentTime = g_pISysTimer->pVTbl->get_SingleTimerCounter(g_pISysTimer);
-    uint64_t endTime = currentTime +  5000000ul;
-    uint64_t changeTime = currentTime;
-    g_pIVideo->pVTbl->WriteString(g_pIVideo, 0, 0, 0, 0, CHARACTER_ATTRIBUTE_FORE_COLOR_WHITTE, "3", 1);
-    while ( endTime >= currentTime) {
-        if (changeTime >= currentTime) {
-            printProgress();
-            changeTime += 50000ul;
+void TaskLong(void) {
+    int i = 0;
+    IEcoTask1* pITaskNew = 0;
+    for(i = 0; i <= 100; i++) {
+        ProgressBar("Long Task  :", 12, i, 1, 7, CHARACTER_ATTRIBUTE_FORE_COLOR_GREEN);
+        BusyWait(600000); 
+
+        if (i == 30) {
+            g_pIVideo->pVTbl->WriteString(g_pIVideo, 0, 0, 1, 9, CHARACTER_ATTRIBUTE_FORE_COLOR_CYAN, "Some sudden task created", 24);
+            g_pIScheduler->pVTbl->NewTask(g_pIScheduler, TaskSuperShort, (voidptr_t)15, 0x400, &pITaskNew);
         }
-        currentTime = g_pISysTimer->pVTbl->get_SingleTimerCounter(g_pISysTimer);
     }
+
+    while(1) { BusyWait(10000); }
+}
+
+void TaskMedium(void) {
+    int i = 0;
+    for(i = 0; i <= 100; i++) {
+        ProgressBar("Medium Task:", 12, i, 1, 5, CHARACTER_ATTRIBUTE_FORE_COLOR_GREEN);
+        BusyWait(300000); 
+    }
+
+    while(1) { BusyWait(10000); }
+}
+
+void TaskShort(void) {
+    int i = 0;
+    for(i = 0; i <= 100; i++) {
+        ProgressBar("Short Task :", 12, i, 1, 3, CHARACTER_ATTRIBUTE_FORE_COLOR_GREEN);
+        BusyWait(150000); 
+    }
+
+    while(1) { BusyWait(10000); }
 }
 
 /*
@@ -151,7 +219,6 @@ int16_t EcoMain(IEcoUnknown* pIUnk) {
     IEcoInterfaceBus1MemExt* pIMemExt = 0;
     IEcoVirtualMemory1* pIVrtMem = 0;
     /* Указатель на интерфейс для работы с планировщиком */
-    IEcoTaskScheduler1* pIScheduler = 0;
     IEcoTask1* pITask1 = 0;
     IEcoTask1* pITask2 = 0;
     IEcoTask1* pITask3 = 0;
@@ -170,6 +237,7 @@ int16_t EcoMain(IEcoUnknown* pIUnk) {
     uint16_t y1 = 32;
     uint16_t x2 = 70;
     byte_t color = 170; /* 3-3-2 bit RGB */
+    IEcoTask1* pITask = 0;
 
     /* Создание экземпляра интерфейсной шины */
     result = GetIEcoComponentFactoryPtr_00000000000000000000000042757331->pVTbl->Alloc(GetIEcoComponentFactoryPtr_00000000000000000000000042757331, 0, 0, &IID_IEcoInterfaceBus1, (void **)&pIBus);
@@ -265,20 +333,22 @@ int16_t EcoMain(IEcoUnknown* pIUnk) {
     }
 
     /* Получение интерфейса для работы с планировщиком */
-    result = pIBus->pVTbl->QueryComponent(pIBus, &CID_EcoTaskScheduler1Lab, 0, &IID_IEcoTaskScheduler1, (void**) &pIScheduler);
+    result = pIBus->pVTbl->QueryComponent(pIBus, &CID_EcoTaskScheduler1Lab, 0, &IID_IEcoTaskScheduler1, (void**) &g_pIScheduler);
     /* Проверка */
-    if (result != 0 || pIScheduler == 0) {
+    if (result != 0 || g_pIScheduler == 0) {
         /* Освобождение в случае ошибки */
         goto Release;
     }
 
     /* Инициализация */
-    pIScheduler->pVTbl->InitWith(pIScheduler, pIBus, &__heap_start__+0x090000, 0x080000);
+    g_pIScheduler->pVTbl->InitWith(g_pIScheduler, pIBus, &__heap_start__+0x090000, 0x080000);
 
-    /* Создание статических задач */
-    pIScheduler->pVTbl->NewTask(pIScheduler, Task1, 0, 0x100, &pITask1);
-    pIScheduler->pVTbl->NewTask(pIScheduler, Task2, 0, 0x100, &pITask2);
-    pIScheduler->pVTbl->NewTask(pIScheduler, Task3, 0, 0x100, &pITask3);
+
+    g_pIScheduler->pVTbl->NewTask(g_pIScheduler, TaskShort, (voidptr_t)40, 0x400, &pITask3);
+
+    g_pIScheduler->pVTbl->NewTask(g_pIScheduler, TaskMedium, (voidptr_t)80, 0x400, &pITask2);
+
+    g_pIScheduler->pVTbl->NewTask(g_pIScheduler, TaskLong, (voidptr_t)160, 0x400, &pITask1);
 
     /* Получение интерфейса для работы с мьютекс */
     result = pIBus->pVTbl->QueryComponent(pIBus, &CID_EcoMutex1Lab, 0, &IID_IEcoMutex1, (void**) &g_pIMutex);
@@ -306,16 +376,17 @@ int16_t EcoMain(IEcoUnknown* pIUnk) {
     g_pISysTimer = pISysTimer;
 
     /* Установка обработчика прерывания программируемого таймера */
+    /*
     result = pISysTimer->pVTbl->QueryInterface(pISysTimer, &IID_IEcoTimer1, (void**)&pITimer);
-    /* Проверка */
+    
     if (result != 0 || pITimer == 0) {
-        /* Освобождение в случае ошибки */
         goto Release;
     }
 
     pITimer->pVTbl->set_Interval(pITimer, 100000);
     pITimer->pVTbl->set_IrqHandler(pITimer, TimerHandler);
     pITimer->pVTbl->Start(pITimer);
+    */
 
     /* Получение интерфейса для работы с видео сервисами VBF */
     result = pIBus->pVTbl->QueryComponent(pIBus, &CID_EcoVFB1, 0, &IID_IEcoVFB1, (void**) &pIVFB);
@@ -330,10 +401,10 @@ int16_t EcoMain(IEcoUnknown* pIUnk) {
     pIVFB->pVTbl->Create(pIVFB, 0, 0, xScreenMode.Width, xScreenMode.Height);
     result = pIVFB->pVTbl->QueryInterface(pIVFB, &IID_IEcoVBIOS1Video, (void**) &pIVideo);
 
-    pIVideo->pVTbl->WriteString(pIVideo, 0, 0, 4, 5, CHARACTER_ATTRIBUTE_FORE_COLOR_WHITTE, strHello, 13);
+    //pIVideo->pVTbl->WriteString(pIVideo, 0, 0, 4, 5, CHARACTER_ATTRIBUTE_FORE_COLOR_WHITTE, strHello, 13);
 
     /* Вывод 1 строки "Эко ОС!!!" - кодовая страница 1251 */
-    pIVideo->pVTbl->WriteString(pIVideo, 0, 0, 0, 1, CHARACTER_ATTRIBUTE_FORE_COLOR_YELLOW, "\xdd\xea\xee\x20\xce\xd1\x21\x21\x21", 9);
+    //pIVideo->pVTbl->WriteString(pIVideo, 0, 0, 0, 1, CHARACTER_ATTRIBUTE_FORE_COLOR_YELLOW, "\xdd\xea\xee\x20\xce\xd1\x21\x21\x21", 9);
 
     /* Рисуем линию - подчеркивание */
     for (offset = x1; offset <= x2; offset++) {
@@ -341,10 +412,10 @@ int16_t EcoMain(IEcoUnknown* pIUnk) {
     }
 
     /* Вывод 4 строки "Привет Мир!" */
-    pIVideo->pVTbl->WriteString(pIVideo, 0, 0, 4, 4, CHARACTER_ATTRIBUTE_FORE_COLOR_GREEN, "\xcf\xf0\xe8\xe2\xe5\xf2\x20\xcc\xe8\xf0\x21", 11);
-    pIVideo->pVTbl->WriteString(pIVideo, 0, 0, 4, 5, CHARACTER_ATTRIBUTE_FORE_COLOR_WHITTE, strHello, 13);
+    //pIVideo->pVTbl->WriteString(pIVideo, 0, 0, 4, 4, CHARACTER_ATTRIBUTE_FORE_COLOR_GREEN, "\xcf\xf0\xe8\xe2\xe5\xf2\x20\xcc\xe8\xf0\x21", 11);
+    //pIVideo->pVTbl->WriteString(pIVideo, 0, 0, 4, 5, CHARACTER_ATTRIBUTE_FORE_COLOR_WHITTE, strHello, 13);
     g_pIVideo = pIVideo;
-    pIScheduler->pVTbl->Start(pIScheduler);
+    g_pIScheduler->pVTbl->Start(g_pIScheduler);
 
     while(1) {
         asm volatile ("NOP\n\t" ::: "memory");
@@ -374,4 +445,3 @@ Release:
 
     return result;
 }
-

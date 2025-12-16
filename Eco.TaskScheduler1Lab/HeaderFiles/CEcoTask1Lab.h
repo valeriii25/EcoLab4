@@ -37,6 +37,11 @@ typedef struct CEcoTask1Lab_C761620F {
     /* Данные экземпляра */
     void (*pfunc) (void);
 
+    uint32_t m_uBurstTime;
+    uint32_t m_uRemainingTime;
+    uint32_t m_bCompleted;
+    uint32_t m_uId;
+
 } CEcoTask1Lab_C761620F, *CEcoTask1Lab_C761620F_Ptr;
 
 #endif /* __C_ECO_TASK_1_LAB_H__ */
